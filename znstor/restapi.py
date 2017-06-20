@@ -95,8 +95,6 @@ class Znstor(object):
         result = self.rest.get(self.rest.projects_base_path())
 
         if result.status_code == 200:
-            if result.json() is None:
-                return []
             return result.json()
         else:
             raise ZnstorBadRequest(object=self.rest.projects_base_path(), debug=result.text)
@@ -244,8 +242,6 @@ class Znstor(object):
         )
 
         if result.status_code == 200:
-            if result.json() is None:
-                return []
             return result.json()
         else:
             raise ZnstorBadRequest(
@@ -640,8 +636,6 @@ class Znstor(object):
         result = self.rest.get(self.rest.hosts_base_path())
 
         if result.status_code == 200:
-            if result.json() is None:
-                return []
             return result.json()
         else:
             raise ZnstorBadRequest(
@@ -814,8 +808,6 @@ class Znstor(object):
         )
 
         if result.status_code == 200:
-            if result.json() is None:
-                return []
             return result.json()
         else:
             raise ZnstorBadRequest(
