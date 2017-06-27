@@ -2,6 +2,7 @@
 """Module restapi - implement simple interface to communicate with znstor daemon.
 """
 from restclient import RestClientURL
+import time
 # TODO: replace pointer to array in GO
 
 
@@ -34,6 +35,10 @@ class ZnstorBadRequest(Exception):
 
 
 class Znstor(object):
+
+    job_inprogress = "In Progress"
+    job_completed = "Completed Successfully"
+
     def __init__(self, **kwargs):
         """
         :key management_address: Storage management interface (ip or dns)
@@ -216,17 +221,42 @@ class Znstor(object):
             )
         )
 
-        if result.status_code == 200:
-            return  result.json()
+        if result.status_code == 202:
+            retry_count = 60
+            time_to_sleep = 1
+            # We observe the change of status for 30 seconds
+            # if it still "in progress" or "completed" We assume that the operation was successfully completed
+            for x in xrange(retry_count):
+                time.sleep(time_to_sleep)
+                job_uuid = result.json()['message']
+                job_result = self.rest.get(
+                    "{base_path}/{project_name}/volumes/job/{uuid}".format(
+                        base_path=self.rest.projects_base_path(),
+                        project_name=project,
+                        uuid = job_uuid,
+                    )
+                )
+                job_status = job_result.json()['message']
+                if job_status == self.job_completed:
+                    return
+                if job_status != self.job_completed and job_status != self.job_inprogress:
+                    raise ZnstorBadRequest(
+                        object="{base_path}/{project_name}/volumes/{volume_name}".format(
+                            base_path=self.rest.projects_base_path(),
+                            project_name=project,
+                            volume_name=volume
+                        ),
+                        debug=result.text
+                    )
         else:
-            raise ZnstorBadRequest(
-                object="{base_path}/{project_name}/volumes/{volume_name}".format(
-                    base_path=self.rest.projects_base_path(),
-                    project_name=project,
-                    volume_name=volume
-                ),
-                debug=result.text
-            )
+           raise ZnstorBadRequest(
+               object="{base_path}/{project_name}/volumes/{volume_name}".format(
+                   base_path=self.rest.projects_base_path(),
+                   project_name=project,
+                   volume_name=volume
+               ),
+               debug=result.text
+           )
 
     def volume_list(self, project):
         """
@@ -421,8 +451,6 @@ class Znstor(object):
         :param snapshot: Snapshot name
         :return:
         """
-        #result = self.rest.delete(
-        #    self.rest.projects_base_path() + "/" + project + "/volumes/" + volume + "/snapshots/" + snapshot)
         result = self.rest.delete(
             "{base_path}/{project_name}/volumes/{volume_name}/snapshots/{snapshot_name}".format(
                 base_path=self.rest.projects_base_path(),
@@ -432,8 +460,34 @@ class Znstor(object):
             )
         )
 
-        if result.status_code == 200:
-            return result.json()
+        if result.status_code == 202:
+            retry_count = 60
+            time_to_sleep = 1
+            # We observe the change of status for 30 seconds
+            # if it still "in progress" or "completed" We assume that the operation was successfully completed
+            for x in xrange(retry_count):
+                time.sleep(time_to_sleep)
+                job_uuid = result.json()['message']
+                job_result = self.rest.get(
+                    "{base_path}/{project_name}/volumes/job/{uuid}".format(
+                        base_path=self.rest.projects_base_path(),
+                        project_name=project,
+                        uuid = job_uuid,
+                    )
+                )
+                job_status = job_result.json()['message']
+                if job_status == self.job_completed:
+                    return
+                if job_status != self.job_completed and job_status != self.job_inprogress:
+                    raise ZnstorBadRequest(
+                        object="{base_path}/{project_name}/volumes/{volume_name}/snapshots/{snapshot_name}".format(
+                            base_path=self.rest.projects_base_path(),
+                            project_name=project,
+                            volume_name=volume,
+                            snapshot_name=snapshot,
+                        ),
+                        debug=result.text
+                    )
         else:
             raise ZnstorBadRequest(
                 object="{base_path}/{project_name}/volumes/{volume_name}/snapshots/{snapshot_name}".format(
