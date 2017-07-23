@@ -82,13 +82,8 @@ class ZNSTORISCSIDriver(driver.ISCSIDriver):
         project = self.storage.project_get(self.lcfg.znstor_project)
 
         # check quota properties
-        if project['options']['quota'] != int(self.lcfg.quota * units.Gi):
-            self.storage.project_set(project['project'], quota=int(self.lcfg.quota * units.Gi))
-
-        # check compression property
-        if project['options']['compression'] != self.lcfg.compression:
-            self.storage.project_set(
-                project['project'], compression=self.lcfg.compression)
+        self.storage.project_set(project['project'], quota=int(self.lcfg.quota * units.Gi))
+        self.storage.project_set(project['project'], compression=self.lcfg.compression)
 
     def check_for_setup_error(self):
         """Check if setup ended successfully"""
@@ -129,10 +124,10 @@ class ZNSTORISCSIDriver(driver.ISCSIDriver):
 
         # add volume count information
         try:
-            filesystems = self.storage.volume_list(project['project'])
+            vols_list = self.storage.volume_list(project['project'])
             # noinspection PyArgumentList
             # TODO: must return empty array if no one volume exist
-            single_pool.update(total_volumes=len(filesystems))
+            single_pool.update(total_volumes=len(vols_list))
         except znstor_restapi.ZnstorObjectNotFound as e:
             # TODO: remove this exception
             # There is no project within the project.
@@ -161,8 +156,8 @@ class ZNSTORISCSIDriver(driver.ISCSIDriver):
         """delete volume"""
         alias = volume['name']
         try:
-            id = self.storage.volume_get_by_alias(self.lcfg.znstor_project, alias)['id']
-            self.storage.volume_destroy(self.lcfg.znstor_project, id)
+            lu_uuid = self.storage.volume_get_by_alias(self.lcfg.znstor_project, alias)['LUName']
+            self.storage.volume_destroy(self.lcfg.znstor_project, lu_uuid)
         except znstor_restapi.ZnstorBadRequest as e:
             LOG.error(e)
             raise exception.VolumeIsBusy(
@@ -173,7 +168,7 @@ class ZNSTORISCSIDriver(driver.ISCSIDriver):
 
         # get volume that should be exported to host
         try:
-            znst_vol = self.storage.volume_get_by_alias(
+            vol = self.storage.volume_get_by_alias(
                 self.lcfg.znstor_project, alias)
         except znstor_restapi.ZnstorBadRequest as e:
             LOG.debug("ZNSTOR. Can't export volume. Err: %s" % str(e))
@@ -195,58 +190,57 @@ class ZNSTORISCSIDriver(driver.ISCSIDriver):
 
         iscsi_properties = {}
         # check if volume already exported to client
-        if znst_vol['views']:
-            for view in znst_vol['views']:
+
+        views = self.storage.volume_exports(self.lcfg.znstor_project, vol['LUName'])
+
+        if len(views) > 0:
+            for view in views:
                 if view['HostGroup'] == initiator_host and view['TargetGroup'] == self.lcfg.target_group:
                     iscsi_properties['target_discovered'] = False
                     iscsi_properties['target_portal'] = self.lcfg.portal_addr
                     iscsi_properties['target_iqn'] = self.lcfg.portal_iqn
                     iscsi_properties['target_lun'] = view['LUN']
-                    iscsi_properties['volume_id'] = znst_vol['serial']
+                    iscsi_properties['volume_id'] = vol['SerialNum']
                     iscsi_properties['discard'] = True
                     return {
                         'driver_volume_type': 'iscsi',
                         'data': iscsi_properties
                     }
 
-        exported_volume = self.storage.volume_export(
-            self.lcfg.znstor_project, znst_vol['id'], initiator_host, self.lcfg.target_group, -1)
+        self.storage.volume_export(
+            self.lcfg.znstor_project, vol['LUName'], initiator_host, self.lcfg.target_group, -1)
 
-        view = {}
-        for v in exported_volume['views']:
-            if v['HostGroup'] == initiator_host and v['TargetGroup'] == self.lcfg.target_group:
-                view = v
-                break
-
-        iscsi_properties['target_discovered'] = False
-        iscsi_properties['target_portal'] = self.lcfg.portal_addr
-        iscsi_properties['target_iqn'] = self.lcfg.portal_iqn
-        iscsi_properties['target_lun'] = view['LUN']
-        iscsi_properties['volume_id'] = exported_volume['lu']['SerialNum']
-        iscsi_properties['discard'] = True
-
-        return {
-            'driver_volume_type': 'iscsi',
-            'data': iscsi_properties
-        }
+        views = self.storage.volume_exports(self.lcfg.znstor_project, vol['LUName'])
+        for view in views:
+            if view['HostGroup'] == initiator_host and view['TargetGroup'] == self.lcfg.target_group:
+                iscsi_properties['target_discovered'] = False
+                iscsi_properties['target_portal'] = self.lcfg.portal_addr
+                iscsi_properties['target_iqn'] = self.lcfg.portal_iqn
+                iscsi_properties['target_lun'] = view['LUN']
+                iscsi_properties['volume_id'] = vol['SerialNum']
+                iscsi_properties['discard'] = True
+                return {
+                    'driver_volume_type': 'iscsi',
+                    'data': iscsi_properties
+                }
 
     def terminate_connection(self, volume, connector, **kwargs):
         """Driver entry point to terminate connection for a volume"""
         alias = volume['name']
         try:
-            znst_vol = self.storage.volume_get_by_alias(self.lcfg.znstor_project, alias)
+            vol = self.storage.volume_get_by_alias(self.lcfg.znstor_project, alias)
         except znstor_restapi.ZnstorBadRequest as e:
             LOG.debug("ZNSTOR. Can't export volume. Err: %s" % str(e))
             raise exception.VolumeBackendAPIException(message="Volume export failed: %s" % volume['name'])
 
         initiator_iqn = connector['initiator']
         initiator_host = connector['host']
-        views = znst_vol['views']
+        views = self.storage.volume_exports(self.lcfg.znstor_project, vol['LUName'])
         if len(views) > 0:
-            for view in znst_vol['views']:
+            for view in views:
                 if view['HostGroup'] == initiator_host and view['TargetGroup'] == self.lcfg.target_group:
                     self.storage.volume_unexport(
-                        self.lcfg.znstor_project, znst_vol['id'], initiator_host, self.lcfg.target_group, -1)
+                        self.lcfg.znstor_project, vol['LUName'], initiator_host, self.lcfg.target_group, -1)
 
     def clone_image(self, volume, image_location, image_id, image_meta, image_service):
         # TODO: need to implements
@@ -270,8 +264,8 @@ class ZNSTORISCSIDriver(driver.ISCSIDriver):
         alias = snapshot['volume_name']
         snapshot_name = snapshot['name']
         try:
-            znst_vol = self.storage.volume_get_by_alias(self.lcfg.znstor_project, alias)
-            self.storage.volume_destroy_snapshot(self.lcfg.znstor_project, znst_vol['id'], snapshot_name)
+            vol = self.storage.volume_get_by_alias(self.lcfg.znstor_project, alias)
+            self.storage.volume_destroy_snapshot(self.lcfg.znstor_project, vol['LUName'], snapshot_name)
         except znstor_restapi.ZnstorBadRequest as e:
             LOG.error('Snapshot %s: has clones. Err: %s' % (snapshot['name'], e))
             raise exception.SnapshotIsBusy(snapshot_name=snapshot['name'])
@@ -281,8 +275,8 @@ class ZNSTORISCSIDriver(driver.ISCSIDriver):
         snapname = snapshot['name']
 
         try:
-            znst_vol = self.storage.volume_get_by_alias(self.lcfg.znstor_project, alias)
-            self.storage.volume_create_snapshot(self.lcfg.znstor_project, znst_vol['id'], snapname)
+            vol = self.storage.volume_get_by_alias(self.lcfg.znstor_project, alias)
+            self.storage.volume_create_snapshot(self.lcfg.znstor_project, vol['LUName'], snapname)
         except znstor_restapi.ZnstorBadRequest as e:
             LOG.error(e)
             raise exception.VolumeBackendAPIException(
@@ -291,8 +285,8 @@ class ZNSTORISCSIDriver(driver.ISCSIDriver):
     def extend_volume(self, volume, new_size):
         try:
             alias = volume['name']
-            znst_vol = self.storage.volume_get_by_alias(self.lcfg.znstor_project, alias)
-            self.storage.volume_resize(self.lcfg.znstor_project, znst_vol['id'], new_size * units.Gi)
+            vol = self.storage.volume_get_by_alias(self.lcfg.znstor_project, alias)
+            self.storage.volume_resize(self.lcfg.znstor_project, vol['LUName'], new_size * units.Gi)
         except znstor_restapi.ZnstorBadRequest as e:
             LOG.error(e)
             raise exception.VolumeBackendAPIException(

@@ -320,7 +320,7 @@ class Znstor(object):
         """
         volumes = self.volume_list(project)
         for vol in volumes:
-            if vol['alias'] == alias:
+            if vol['Alias'] == alias:
                 return vol
 
     def volume_resize(self, project, volume, volume_size):
@@ -601,9 +601,6 @@ class Znstor(object):
         :return: volume object
         """
         #result = self.rest.put(
-        #    self.rest.projects_base_path() + "/" + project + "/volumes/" + volume
-        #    + "/export", {'hostgroup': hostgroup, 'targetgroup': targetgroup, 'lun': lun}
-        #)
         result = self.rest.put(
             "{base_path}/{project_name}/volumes/{volume_name}/export".format(
                 base_path=self.rest.projects_base_path(),
@@ -637,7 +634,7 @@ class Znstor(object):
         :return: volume object
         """
         result = self.rest.put(
-            "{base_path}/{project_name}/volumes/{volume_name}/export".format(
+            "{base_path}/{project_name}/volumes/{volume_name}/unexport".format(
                 base_path=self.rest.projects_base_path(),
                 project_name=project,
                 volume_name=volume
@@ -649,7 +646,7 @@ class Znstor(object):
             return self.volume_get(project, volume)
         else:
             raise ZnstorBadRequest(
-                object="{base_path}/{project_name}/volumes/{volume_name}/export".format(
+                object="{base_path}/{project_name}/volumes/{volume_name}/unexport".format(
                     base_path=self.rest.projects_base_path(),
                     project_name=project,
                     volume_name=volume
@@ -657,6 +654,29 @@ class Znstor(object):
                 payload={'hostgroup': hostgroup, 'targetgroup': targetgroup, 'lun': lun},
                 debug=result.text
             )
+    def volume_exports(self, project, volume):
+        """
+        Get exports list
+        :param project: ProjectID
+        :param volume: VolumeID
+        :return: []exports array
+        """
+        result = self.rest.get(
+            "{base_path}/{project_name}/volumes/{volume_name}/exports".format(
+                base_path=self.rest.projects_base_path(),
+                project_name=project,
+                volume_name=volume
+            ))
+
+        if result.status_code == 200:
+            return result.json()
+        else:
+            raise ZnstorBadRequest(
+                object="{base_path}/{project_name}/volumes/{volume_name}/exports".format(
+                    base_path=self.rest.projects_base_path(),
+                    project_name=project,
+                    volume_name=volume
+                ))
 
     def hostgroup_create(self, hostgroup):
         """
