@@ -5,6 +5,7 @@ from cinder import exception
 from cinder import interface
 from cinder.volume import driver
 from cinder.volume.drivers.znstor import restapi as znstor_restapi
+import math
 
 CONF = cfg.CONF
 LOG = log.getLogger(__name__)
@@ -254,7 +255,7 @@ class ZNSTORISCSIDriver(driver.ISCSIDriver):
         try:
             parent_vol = self.storage.volume_get_by_alias(self.lcfg.znstor_project, parent_vol_alias)
             self.storage.volume_create_from_snapshot(
-                self.lcfg.znstor_project, parent_vol['id'], snapname, new_vol_alias)
+                self.lcfg.znstor_project, parent_vol['LUName'], snapname, new_vol_alias)
         except znstor_restapi.ZnstorBadRequest as e:
             LOG.error(e)
             raise exception.VolumeBackendAPIException(
@@ -291,6 +292,45 @@ class ZNSTORISCSIDriver(driver.ISCSIDriver):
             LOG.error(e)
             raise exception.VolumeBackendAPIException(
                 message="ZNSTOR. delete volume failed with error. Err: %s" % str(e))
+
+    def clone_image(self, context, volume,
+                    image_location, image_meta,
+                    image_service):
+        """Create a volume efficiently from an existing image.
+        Verify the image ID being used:
+        (1) If there is no existing cache volume, create one and transfer
+        image data to it. Take a snapshot.
+        (2) If a cache volume already exists, verify if it is either alternated
+        or updated. If so try to remove it, raise exception if removal fails.
+        Create a new cache volume as in (1).
+        Clone a volume from the cache volume and returns it to Cinder.
+        A file lock is placed on this method to prevent:
+        (a) a race condition when a cache volume has been verified, but then
+        gets deleted before it is cloned.
+        (b) failure of subsequent clone_image requests if the first request is
+        still pending.
+        """
+
+        LOG.debug('Cloning image %(image)s to volume %(volume)s',
+                  {'image': image_meta['id'], 'volume': volume['name']})
+
+
+        cachevol_size = image_meta['size']
+        if 'virtual_size' in image_meta and image_meta['virtual_size']:
+            cachevol_size = image_meta['virtual_size']
+
+        cachevol_size_gb = int(math.ceil(float(cachevol_size) / units.Gi))
+
+        # Make sure that volume is big enough since adds extra metadata.
+        if cachevol_size_gb % units.Gi == 0:
+            cachevol_size_gb += 1
+
+        if cachevol_size_gb > volume['size']:
+            exception_msg = ('Image size %(img_size)Gb is large'
+                             'than volume size %(vol_size)Gb.',
+                             {'img_size': cachevol_size_gb, 'vol_size': volume['size']})
+            LOG.error(exception_msg)
+            return None, False
 
     def create_export(self, context, volume, connector):
         pass
